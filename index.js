@@ -1,6 +1,8 @@
+
 const express = require('express')
 const app = express()
-
+require('dotenv').config()
+const Note = require('./models/note')
 
 let notes = [
     {
@@ -39,10 +41,15 @@ const generateId = () => {
 
 
 
+
+
+
 app.use(express.static('dist'))
 
+/*there is no need to use cors because the backend now has a diffent origin from the frontend
 const cors = require('cors')
 app.use(cors())
+*/
 
 app.use(express.json())
 
@@ -50,21 +57,24 @@ app.use(express.json())
 
 
 
+
 //route to add new notes
-app.post('/api/notes', (request, response) => {
+app.post('/api/notes', (request, response, next) => {
     const body = request.body
     if(!body.content){
         return response.status(400).json({
             error: 'content missing'
         })
     }
-    const note = {
-        content: body.content,
-        important: body.important || false,
-        id: generateId()
-    }
-    notes = notes.concat(note)
-    response.json(note)
+   
+    const note = new Note({
+    content: body.content,
+    important: body.important || false,
+   })
+
+   note.save().then(savedNote => {
+    response.json(savedNote)
+   }).catch(error => {next(error)})
 
 })
 
@@ -76,10 +86,31 @@ app.get('/', (request, response) => {
 
 
 app.get('/api/notes', (request, response) => {
-    response.json(notes)
+    Note.find({}).then(notes => {
+        response.json(notes)
+    })
 })
 
-//route to fetch a single resource
+
+app.get('/api/notes/:id', (request, response, next) => {
+    Note.findById(request.params.id).then(note => {
+        if(note){
+            response.json(note)
+        }
+        else{
+            console.log('the note was not found')
+            response.status(404).end()
+        }
+    }).catch(error => next(error))
+})
+
+/*this route uses the list variable instead of the database
+app.get('/api/notes', (request, response) => {
+    response.json(notes)
+})
+*/
+
+/*route to fetch a single resource from the list
 app.get('/api/notes/:id', (request, response) => {
     const id = request.params.id
     const note = notes.find(n => n.id === id)
@@ -90,8 +121,27 @@ app.get('/api/notes/:id', (request, response) => {
         response.status(400).end()
     }
 })
+*/
 
-//route to change the importance of a note (albi)
+app.put('/api/notes/:id', (request, response, next) => {
+    const {content, important} = request.body
+    Note.findById(request.params.id).then(note => {
+        if(!note){
+            return response.status(404).end()
+        }
+
+        note.content = content
+        note.important = important
+
+        return note.save().then((updatedNote) => {
+            response.json(updatedNote)
+        })
+
+    }).catch(error => next(error))
+})
+
+
+/*route to change the importance of a note (albi)
 app.put('/api/notes/:id', (request, response) => {
     const id = request.params.id
     const note = notes.find(n => n.id === id)
@@ -100,13 +150,14 @@ app.put('/api/notes/:id', (request, response) => {
     response.json(newNote)
 })
 
+*/
 
 //route to delete a resource
 //used postman to test it, and it worked
-app.delete('/api/notes/:id', (request, response) => {
-    const id = request.params.id
-    notes = notes.filter(note => note.id !== id)
-    response.status(204).end()
+app.delete('/api/notes/:id', (request, response, next) => {
+    Note.findByIdAndDelete(request.params.id).then(result =>{
+        response.status(204).end()
+    }).catch(error => next(error))
 })
 
 
@@ -114,6 +165,21 @@ app.delete('/api/notes/:id', (request, response) => {
 
 
 //this is a middleware to log request information
+
+
+
+
+
+const errorHandler = (error, request, response, next) => {
+    console.log(error.message)
+    if(error.name === 'CastError'){
+        return response.status(400).send({error: 'malformatted id'})
+    }
+    next(error)
+}
+
+
+
 const requestLogger = (request, response, next) => {
     console.log('Method:', request.method)
     console.log('Path:', request.path)
@@ -129,8 +195,11 @@ const unknownEndpoint = (request, response) => {
 
 app.use(unknownEndpoint)
 
+//errorHandler has to be the last loaded middleware, also all the routes should be
+//registered before this!
+app.use(errorHandler)
 
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT
 
 app.listen(PORT, () => {
     console.log(`The server is listening on port ${PORT}`)
